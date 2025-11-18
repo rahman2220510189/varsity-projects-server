@@ -401,6 +401,50 @@ async function run() {
             }
         });
 
+        //get equipment that are overdue
+        app.get('/api/history/due', async (req, res) => {
+            try {
+                const now = new Date();
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 10;
+                const skip = (page - 1) * limit;
+
+                const query = {
+                    status: 'collected',
+                    returnDate: { $lt: now }
+                };
+
+                const total = await collectionRecords.countDocuments(query);
+                const overdueRecords = await collectionRecords.find(query)
+                    .sort({ returnDate: 1 })
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                const enrichedOverdueHistory = await Promise.all(
+                    overdueRecords.map(async (record) => {
+                        const item = await uploadItem.findOne({ _id: new ObjectId(record.itemId) });
+                        return {
+                            ...record,
+                            itemImage: item ? item.image : null,
+                            itemName: item ? item.name : record.itemName, // Ensure item name is current
+                            itemId: item ? item._id : record.itemId,
+                        };
+                    })
+                );
+                res.json({
+                    dueHistory: enrichedOverdueHistory,
+                    currentPage: page,
+                    totalItems: total,
+                    totalPages: Math.ceil(total / limit),
+                });
+
+
+            } catch(error){
+                res.status(500).json({ message: 'Error fetching overdue equipment list', error: error.message });
+            }
+        });
+
         //update equipment quantity
         app.put('/api/equipment/:id', upload.single('image'), async (req, res) => {
             try {
@@ -425,48 +469,48 @@ async function run() {
 
                 if (req.file) {
                     updatedData.image = req.file.filename;
-                
-                const oldImagePath = path.join(__dirname, 'uploads', item.image);
-                if(fs.existsSync(oldImagePath)){
-                    fs.unlinkSync(oldImagePath);
-                }
-            }
-            const result = await uploadItem.updateOne(query, { $set: updatedData });
-            res.json({
-                message: 'Item updated successfully',
-                result,
-                uploadItem: {_id: id, ...updatedData}
-            });
 
-            }catch (error) {
+                    const oldImagePath = path.join(__dirname, 'uploads', item.image);
+                    if (fs.existsSync(oldImagePath)) {
+                        fs.unlinkSync(oldImagePath);
+                    }
+                }
+                const result = await uploadItem.updateOne(query, { $set: updatedData });
+                res.json({
+                    message: 'Item updated successfully',
+                    result,
+                    uploadItem: { _id: id, ...updatedData }
+                });
+
+            } catch (error) {
                 res.status(500).json({ message: 'Error updating item', error: error.message });
             };
         });
 
 
-    //Delete equipment
-    app.delete('/api/equipment/:id', async (req, res) => {
-        try {
-            const { ObjectId } = require('mongodb');
-            const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const item = await uploadItem.findOne(query);
+        //Delete equipment
+        app.delete('/api/equipment/:id', async (req, res) => {
+            try {
+                const { ObjectId } = require('mongodb');
+                const id = req.params.id;
+                const query = { _id: new ObjectId(id) };
+                const item = await uploadItem.findOne(query);
 
-            if (!item) {
-                return res.status(404).json({ message: 'Item not found' });
+                if (!item) {
+                    return res.status(404).json({ message: 'Item not found' });
+                }
+                // Delete image file
+                const imagePath = path.join(__dirname, 'uploads', item.image);
+                if (fs.existsSync(imagePath)) {
+                    fs.unlinkSync(imagePath);
+                }
+                // Delete item from database
+                const result = await uploadItem.deleteOne(query);
+                res.json({ message: 'Item deleted successfully', result });
+            } catch (error) {
+                res.status(500).json({ message: 'Error deleting item', error: error.message });
             }
-            // Delete image file
-            const imagePath = path.join(__dirname, 'uploads', item.image);
-            if (fs.existsSync(imagePath)) {
-                fs.unlinkSync(imagePath);
-            }
-            // Delete item from database
-            const result = await uploadItem.deleteOne(query);
-            res.json({ message: 'Item deleted successfully', result });
-        }catch (error) {
-            res.status(500).json({ message: 'Error deleting item', error: error.message });
-        }
-    })
+        })
 
 
 
