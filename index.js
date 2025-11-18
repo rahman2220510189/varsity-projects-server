@@ -30,7 +30,7 @@ async function run() {
         const uploadItem = client.db("embedded-lab").collection("item");
         const collectionRecords = client.db("embedded-lab").collection("collectionRecords");
 
-     
+
 
 
         const storage = multer.diskStorage({
@@ -99,11 +99,11 @@ async function run() {
                 };
 
                 const suggestions = await uploadItem.find(searchQuery)
-                     .project({ name: 1, image: 1 })
+                    .project({ name: 1, image: 1 })
                     .limit(5)
                     .toArray();
                 res.json(suggestions);
-                
+
             } catch (error) {
                 res.status(500).json({ message: 'Error fetching suggestions', error: error.message });
             }
@@ -153,10 +153,10 @@ async function run() {
                     userEmail,
                     userPhone,
                     department,
-                    role,          
-                    Id,            
-                    section,       
-                    designation,   
+                    role,
+                    Id,
+                    section,
+                    designation,
                     returnDate
                 } = req.body;
 
@@ -172,13 +172,13 @@ async function run() {
                     return res.status(400).json({ message: 'Insufficient quantity available' });
                 }
 
-                
+
                 await uploadItem.updateOne(
                     { _id: new ObjectId(id) },
                     { $inc: { quantity: -collectQuantity } }
                 );
 
-                
+
                 let userInfo = {
                     userName,
                     userEmail,
@@ -208,8 +208,8 @@ async function run() {
                     userInfo.department = department;
                     userInfo.designation = designation;
                 }
-                  
-                
+
+
 
 
                 const collectionRecord = {
@@ -235,51 +235,171 @@ async function run() {
             }
         });
 
- // Return equipment
-     
-// Return equipment (increase quantity)
-app.post('/api/equipment/:id/return', async (req, res) => {
-  try {
-    const { ObjectId } = require('mongodb');
-    const { returnQuantity, userName, userEmail, Id } = req.body;
-    
-    const item = await uploadItem.findOne({ _id: new ObjectId(req.params.id) });
-    
-    if (!item) {
-      return res.status(404).json({ message: 'Item not found' });
-    }
-    
-    // Update quantity
-    await uploadItem.updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $inc: { quantity: returnQuantity } }
-    );
-    
-    // Update collection record
-    const db = uploadItem.s.db;
-    await db.collection('collectionRecords').updateOne(
-      { 
-        itemId: req.params.id,
-        userName,
-        userEmail,
-        Id,
-        status: 'collected'
-      },
-      { 
-        $set: { 
-          status: 'returned',
-          returnedAt: new Date()
-        }
-      }
-    );
-    
-    res.json({ message: 'Item returned successfully' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error returning item', error: error.message });
-  }
-});
+        // Return equipment
+
+        // Return equipment (increase quantity)
+        app.post('/api/equipment/:id/return', async (req, res) => {
+            try {
+                const { ObjectId } = require('mongodb');
+                const { returnQuantity, userName, userEmail, Id } = req.body;
+
+                const item = await uploadItem.findOne({ _id: new ObjectId(req.params.id) });
+
+                if (!item) {
+                    return res.status(404).json({ message: 'Item not found' });
+                }
+
+                // Update quantity
+                await uploadItem.updateOne(
+                    { _id: new ObjectId(req.params.id) },
+                    { $inc: { quantity: returnQuantity } }
+                );
+
+                // Update collection record
+                const db = uploadItem.s.db;
+                await db.collection('collectionRecords').updateOne(
+                    {
+                        itemId: req.params.id,
+                        userName,
+                        userEmail,
+                        Id,
+                        status: 'collected'
+                    },
+                    {
+                        $set: {
+                            status: 'returned',
+                            returnedAt: new Date()
+                        }
+                    }
+                );
+
+                res.json({ message: 'Item returned successfully' });
+            } catch (error) {
+                res.status(500).json({ message: 'Error returning item', error: error.message });
+            }
+        });
+
+        //get all collect history
+        app.get('/api/history', async (req, res) => {
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 10;
+                const search = req.query.search || '';
+                const status = req.query.status || '';
+                const skip = (page - 1) * limit;
+
+                let query = {};
+                // build search query
+                if (search) {
+                    query.$or = [
+                        { itemName: { $regex: search, $options: 'i' } },
+                        { userName: { $regex: search, $options: 'i' } },
+                        { userEmail: { $regex: search, $options: 'i' } },
+                        { Id: { $regex: search, $options: 'i' } }
+                    ];
+                }
+                if (status) {
+                    query.status = status;
+                }
+                const total = await collectionRecords.countDocuments(query);
+                const records = await collectionRecords.find(query) // ✅ Records are fetched here
+                    .sort({ entryAt: -1 })
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                //enter history with item image
+                const enrichedHistory = await Promise.all(
+                    records.map(async (record) => {
+                        const item = await uploadItem.findOne({ _id: new ObjectId(record.itemId) });
+                        return {
+                            ...record,
+                            itemImage: item ? item.image : null
+                        };
+                    }
+                    ));
+                res.json({
+                    history: enrichedHistory,
+                    currentPage: page,
+                    totalPages: Math.ceil(total / limit),
+                    totalItems: total
+                });
+            } catch (error) {
+                res.status(500).json({ message: 'Error fetching history', error: error.message });
+            }
+        });
+
+        //get user specific history
+        app.get('api/history/user/:email', async (req, res) => {
+            try {
+                const userEmail = req.params.email;
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 10;
+                const skip = (page - 1) * limit;
+
+                const total = await collectionRecords.countDocuments({ userEmail });
+                const history = await collectionRecords.find({ userEmail })
+                    .sort({ entryAt: -1 })
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                //enter item details 
+                const enrichedHistory = await Promise.all(
+                    history.map(async (record) => {
+                        const item = await uploadItem.findOne({ _id: new ObjectId(record.itemId) });
+                        return {
+                            ...record,
+                            itemImage: item ? item.image : null,
+                            itemDescription: item ? item.description : null,
+                        };
+                    }
+                    ));
+                res.json({
+                    history: enrichedHistory,
+                    currentPage: page,
+                    totalPages: Math.ceil(total / limit),
+                    totalItems: total
+                });
+            } catch (error) {
+                res.status(500).json({ message: 'Error fetching user history', error: error.message });
+            }
+        });
 
 
+        // get statistics for dashboard
+        app.get('/api/history/stats', async (req, res) => {
+            try {
+                const totalRecords = await uploadItem.countDocuments();
+                const totalCollected = await collectionRecords.countDocuments({ status: 'collected' });
+                const totalReturned = await collectionRecords.countDocuments({ status: 'returned' });
+
+                const mostBorrowed = await collectionRecords.aggregate([
+                    { $group: { _id: "$itemName", count: { $sum: 1 } } },
+                    { $sort: { count: -1 } },
+                    { $limit: 5 }
+                ]).toArray();
+
+                //get recent activities
+
+                const recentActivities = await collectionRecords.find()
+                    .sort({ entryAt: -1 })
+                    .limit(5)
+                    .toArray();
+
+                res.json({
+                    totalCollected,
+                    totalReturned,
+                    totalRecords,
+                    activeLoans: totalCollected,
+                    mostBorrowed,
+                    recentActivities
+                });
+            } catch (error) {
+                res.status(500).json({ message: 'Error fetching statistics', error: error.message })
+
+            }
+        });
 
 
 
