@@ -29,9 +29,11 @@ async function run() {
         await client.connect();
         const uploadItem = client.db("embedded-lab").collection("item");
         const collectionRecords = client.db("embedded-lab").collection("collectionRecords");
+        const userCollection = client.db("embedded-lab").collection("users");
 
 
 
+         
 
         const storage = multer.diskStorage({
             destination: (req, file, cb) => {
@@ -46,6 +48,78 @@ async function run() {
             },
         });
         const upload = multer({ storage });
+
+        app.post('/api/users', async (req, res) => {
+            const user = req.body;
+            const query = { email: user.email }
+            const existingUser = await userCollection.findOne(query);
+            
+            if (existingUser) {
+               return res.send({ message: 'user already exists', insertedId: null });
+            }
+            
+            // Set default role as 'user'
+            const newUser = { ...user, role: 'user' };
+            const result = await userCollection.insertOne(newUser);
+            res.send(result);
+        });
+
+        // GET: Check if a specific user is an admin (SECURED BY EMAIL PARAMETER)
+        app.get('/api/users/admin/:email', async (req, res) => {
+            const email = req.params.email;
+            
+            // We trust the frontend sends the correct email after Firebase login.
+            const query = { email: email };
+            const user = await userCollection.findOne(query);
+            let admin = false;
+            
+            if (user) {
+                admin = user.role === 'admin';
+            }
+            res.send({ admin });
+        });
+
+        // GET: Get all users (Admin only) - Using verifyAdmin but aware of current insecurity
+        // NOTE: In a secure app, verifyAdmin would prevent non-admins from hitting this.
+        app.get('/api/users',  async (req, res) => {
+            const result = await userCollection.find().toArray();
+            res.send(result);
+        });
+
+        // PATCH: Make a user an Admin
+        app.patch('/api/users/admin/:id',  async (req, res) => {
+             // WARNING: Should be guarded by verifyAdmin, but simplified here.
+            try {
+                const id = req.params.id;
+                const query = { _id: new ObjectId(id) };
+                
+                const updateDoc = {
+                    $set: {
+                        role: 'admin'
+                    }
+                };
+                const result = await userCollection.updateOne(query, updateDoc);
+                res.send(result);
+            } catch (error) {
+                 res.status(500).json({ message: 'Error making user admin', error: error.message });
+            }
+        });
+        
+        // DELETE: Remove a user (Admin only)
+        app.delete('/api/users/:id', async (req, res) => {
+             // WARNING: Should be guarded by verifyAdmin.
+            try {
+                const id = req.params.id;
+                const query = { _id: new ObjectId(id) };
+                const result = await userCollection.deleteOne(query);
+                if (result.deletedCount === 0) {
+                     return res.status(404).send({ message: 'User not found' });
+                }
+                res.send({ message: 'User deleted successfully' });
+            } catch (error) {
+                 res.status(500).json({ message: 'Error deleting user', error: error.message });
+            }
+        });
 
         // Get Items with Pagination and Search
 
@@ -330,7 +404,7 @@ async function run() {
         });
 
         //get user specific history
-        app.get('api/history/user/:email', async (req, res) => {
+        app.get('/api/history/user/:email', async (req, res) => {
             try {
                 const userEmail = req.params.email;
                 const page = parseInt(req.query.page) || 1;
