@@ -302,7 +302,7 @@ async function run() {
                     query.status = status;
                 }
                 const total = await collectionRecords.countDocuments(query);
-                const records = await collectionRecords.find(query) // ✅ Records are fetched here
+                const records = await collectionRecords.find(query) //  Records are fetched here
                     .sort({ entryAt: -1 })
                     .skip(skip)
                     .limit(limit)
@@ -401,7 +401,72 @@ async function run() {
             }
         });
 
+        //update equipment quantity
+        app.put('/api/equipment/:id', upload.single('image'), async (req, res) => {
+            try {
+                const { ObjectId } = require('mongodb');
+                const id = req.params.id;
+                const query = { _id: new ObjectId(id) };
+                const { name, description, quantity, purpose, website } = req.body;
 
+                const item = await uploadItem.findOne(query);
+
+                if (!item) {
+                    return res.status(404).json({ message: 'Item not found' });
+                }
+                const updatedData = {
+                    name,
+                    description,
+                    quantity: parseInt(quantity),
+                    purpose,
+                    website,
+                    updatedAt: new Date()
+                };
+
+                if (req.file) {
+                    updatedData.image = req.file.filename;
+                
+                const oldImagePath = path.join(__dirname, 'uploads', item.image);
+                if(fs.existsSync(oldImagePath)){
+                    fs.unlinkSync(oldImagePath);
+                }
+            }
+            const result = await uploadItem.updateOne(query, { $set: updatedData });
+            res.json({
+                message: 'Item updated successfully',
+                result,
+                uploadItem: {_id: id, ...updatedData}
+            });
+
+            }catch (error) {
+                res.status(500).json({ message: 'Error updating item', error: error.message });
+            };
+        });
+
+
+    //Delete equipment
+    app.delete('/api/equipment/:id', async (req, res) => {
+        try {
+            const { ObjectId } = require('mongodb');
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const item = await uploadItem.findOne(query);
+
+            if (!item) {
+                return res.status(404).json({ message: 'Item not found' });
+            }
+            // Delete image file
+            const imagePath = path.join(__dirname, 'uploads', item.image);
+            if (fs.existsSync(imagePath)) {
+                fs.unlinkSync(imagePath);
+            }
+            // Delete item from database
+            const result = await uploadItem.deleteOne(query);
+            res.json({ message: 'Item deleted successfully', result });
+        }catch (error) {
+            res.status(500).json({ message: 'Error deleting item', error: error.message });
+        }
+    })
 
 
 
