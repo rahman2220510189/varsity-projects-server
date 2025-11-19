@@ -1,12 +1,12 @@
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 require("dotenv").config();
 
 const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
-const { create } = require("domain");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -16,7 +16,7 @@ app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cjuyyb2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
@@ -24,6 +24,7 @@ const client = new MongoClient(uri, {
         deprecationErrors: true,
     }
 });
+
 async function run() {
     try {
         await client.connect();
@@ -31,10 +32,41 @@ async function run() {
         const collectionRecords = client.db("embedded-lab").collection("collectionRecords");
         const userCollection = client.db("embedded-lab").collection("users");
 
+        // JWT related API
+        app.post('/jwt', async (req, res) => {
+            const user = req.body;
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+            res.send({ token });
+        });
 
+        // Verify Token Middleware
+        const verifyToken = (req, res, next) => {
+            if (!req.headers.authorization) {
+                return res.status(401).send({ message: 'unauthorized access' });
+            }
+            const token = req.headers.authorization.split(' ')[1];
+            jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+                if (err) {
+                    return res.status(401).send({ message: 'unauthorized access' });
+                }
+                req.decoded = decoded;
+                next();
+            });
+        };
 
-         
+        // Verify Admin Middleware
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded.email;
+            const query = { email: email };
+            const user = await userCollection.findOne(query);
+            const isAdmin = user?.role === 'admin';
+            if (!isAdmin) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            next();
+        };
 
+        // Multer Storage Config
         const storage = multer.diskStorage({
             destination: (req, file, cb) => {
                 if (!fs.existsSync('uploads')) {
@@ -42,88 +74,74 @@ async function run() {
                 }
                 cb(null, 'uploads/');
             },
-
             filename: (req, file, cb) => {
-                cb(null, Date.now() + path.extname(file.originalname)); // Appending extension
+                cb(null, Date.now() + path.extname(file.originalname));
             },
         });
         const upload = multer({ storage });
 
+        // User Management APIs
         app.post('/api/users', async (req, res) => {
             const user = req.body;
-            const query = { email: user.email }
+            const query = { email: user.email };
             const existingUser = await userCollection.findOne(query);
             
             if (existingUser) {
-               return res.send({ message: 'user already exists', insertedId: null });
+                return res.send({ message: 'user already exists', insertedId: null });
             }
             
-            // Set default role as 'user'
             const newUser = { ...user, role: 'user' };
             const result = await userCollection.insertOne(newUser);
             res.send(result);
         });
 
-        // GET: Check if a specific user is an admin (SECURED BY EMAIL PARAMETER)
         app.get('/api/users/admin/:email', async (req, res) => {
             const email = req.params.email;
-            
-            // We trust the frontend sends the correct email after Firebase login.
             const query = { email: email };
             const user = await userCollection.findOne(query);
             let admin = false;
             
             if (user) {
-                admin = user.role === 'admin';
+                admin = user?.role === 'admin';
             }
             res.send({ admin });
         });
 
-        // GET: Get all users (Admin only) - Using verifyAdmin but aware of current insecurity
-        // NOTE: In a secure app, verifyAdmin would prevent non-admins from hitting this.
-        app.get('/api/users',  async (req, res) => {
+        app.get('/api/users', verifyToken, verifyAdmin, async (req, res) => {
             const result = await userCollection.find().toArray();
             res.send(result);
         });
 
-        // PATCH: Make a user an Admin
-        app.patch('/api/users/admin/:id',  async (req, res) => {
-             // WARNING: Should be guarded by verifyAdmin, but simplified here.
+        app.patch('/api/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
             try {
                 const id = req.params.id;
                 const query = { _id: new ObjectId(id) };
-                
                 const updateDoc = {
-                    $set: {
-                        role: 'admin'
-                    }
+                    $set: { role: 'admin' }
                 };
                 const result = await userCollection.updateOne(query, updateDoc);
                 res.send(result);
             } catch (error) {
-                 res.status(500).json({ message: 'Error making user admin', error: error.message });
+                res.status(500).json({ message: 'Error making user admin', error: error.message });
             }
         });
-        
-        // DELETE: Remove a user (Admin only)
-        app.delete('/api/users/:id', async (req, res) => {
-             // WARNING: Should be guarded by verifyAdmin.
+
+        app.delete('/api/users/:id', verifyToken, verifyAdmin, async (req, res) => {
             try {
                 const id = req.params.id;
                 const query = { _id: new ObjectId(id) };
                 const result = await userCollection.deleteOne(query);
                 if (result.deletedCount === 0) {
-                     return res.status(404).send({ message: 'User not found' });
+                    return res.status(404).send({ message: 'User not found' });
                 }
                 res.send({ message: 'User deleted successfully' });
             } catch (error) {
-                 res.status(500).json({ message: 'Error deleting user', error: error.message });
+                res.status(500).json({ message: 'Error deleting user', error: error.message });
             }
         });
 
-        // Get Items with Pagination and Search
-
-        app.get('/api/equipment', async (req, res) => {
+        // Equipment Management APIs
+      app.get('/api/equipment', async (req, res) => {
             try {
                 const page = parseInt(req.query.page) || 1;
                 const limit = parseInt(req.query.limit) || 9;
