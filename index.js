@@ -31,8 +31,8 @@ async function run() {
         const uploadItem = client.db("embedded-lab").collection("item");
         const collectionRecords = client.db("embedded-lab").collection("collectionRecords");
         const userCollection = client.db("embedded-lab").collection("users");
-        
-        // 🆕 Admin Activity Logs Collection
+
+        //  Admin Activity Logs Collection
         const adminActivityLogs = client.db("embedded-lab").collection("adminActivityLogs");
 
         // JWT related API
@@ -69,7 +69,7 @@ async function run() {
             next();
         };
 
-        // 🆕 Admin Activity Logger Function
+        //  Admin Activity Logger Function
         const logAdminActivity = async (adminEmail, action, details) => {
             try {
                 const log = {
@@ -104,11 +104,11 @@ async function run() {
             const user = req.body;
             const query = { email: user.email };
             const existingUser = await userCollection.findOne(query);
-            
+
             if (existingUser) {
                 return res.send({ message: 'user already exists', insertedId: null });
             }
-            
+
             const newUser = { ...user, role: 'user' };
             const result = await userCollection.insertOne(newUser);
             res.send(result);
@@ -119,7 +119,7 @@ async function run() {
             const query = { email: email };
             const user = await userCollection.findOne(query);
             let admin = false;
-            
+
             if (user) {
                 admin = user?.role === 'admin';
             }
@@ -131,20 +131,20 @@ async function run() {
             res.send(result);
         });
 
-        // 🔄 Make Admin with Logging
+        //  Make Admin with Logging
         app.patch('/api/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
             try {
                 const id = req.params.id;
                 const query = { _id: new ObjectId(id) };
-                
+
                 // Get user details before update
                 const targetUser = await userCollection.findOne(query);
-                
+
                 const updateDoc = {
                     $set: { role: 'admin' }
                 };
                 const result = await userCollection.updateOne(query, updateDoc);
-                
+
                 // 🆕 Log admin activity
                 await logAdminActivity(req.decoded.email, 'MAKE_ADMIN', {
                     targetUserId: id,
@@ -152,35 +152,35 @@ async function run() {
                     targetUserName: targetUser?.displayName || targetUser?.name || 'Unknown',
                     ipAddress: req.ip
                 });
-                
+
                 res.send(result);
             } catch (error) {
                 res.status(500).json({ message: 'Error making user admin', error: error.message });
             }
         });
 
-        // 🔄 Delete User with Logging
+        //  Delete User with Logging
         app.delete('/api/users/:id', verifyToken, verifyAdmin, async (req, res) => {
             try {
                 const id = req.params.id;
                 const query = { _id: new ObjectId(id) };
-                
+
                 // Get user details before deletion
                 const targetUser = await userCollection.findOne(query);
-                
+
                 const result = await userCollection.deleteOne(query);
                 if (result.deletedCount === 0) {
                     return res.status(404).send({ message: 'User not found' });
                 }
-                
-                // 🆕 Log admin activity
+
+                //  Log admin activity
                 await logAdminActivity(req.decoded.email, 'DELETE_USER', {
                     deletedUserId: id,
                     deletedUserEmail: targetUser?.email,
                     deletedUserName: targetUser?.displayName || targetUser?.name || 'Unknown',
                     ipAddress: req.ip
                 });
-                
+
                 res.send({ message: 'User deleted successfully' });
             } catch (error) {
                 res.status(500).json({ message: 'Error deleting user', error: error.message });
@@ -247,24 +247,23 @@ async function run() {
             }
         });
 
-        // 🔄 Upload Item - NO MIDDLEWARE (এখানে middleware নেই তাই 401 error আসবে না)
         app.post('/api/equipment', upload.single('image'), async (req, res) => {
             const { name, description, quantity, purpose, website, userEmail } = req.body;
             try {
                 const image = req.file.filename;
-                const newItem = { 
-                    name, 
-                    quantity: parseInt(quantity), 
-                    description, 
-                    image, 
-                    purpose, 
-                    website, 
+                const newItem = {
+                    name,
+                    quantity: parseInt(quantity),
+                    description,
+                    image,
+                    purpose,
+                    website,
                     createdAt: new Date(),
                     createdBy: userEmail || 'Unknown' // userEmail frontend থেকে পাঠাতে হবে
                 };
                 const result = await uploadItem.insertOne(newItem);
-                
-                // 🆕 Log admin activity (if userEmail provided)
+
+                // Log admin activity (if userEmail provided)
                 if (userEmail) {
                     await logAdminActivity(userEmail, 'ADD_ITEM', {
                         itemId: result.insertedId.toString(),
@@ -273,7 +272,7 @@ async function run() {
                         ipAddress: req.ip
                     });
                 }
-                
+
                 res.status(201).json({ message: 'Item uploaded successfully', data: result });
             } catch (error) {
                 res.status(500).json({ message: 'Error uploading item', error: error.message });
@@ -389,28 +388,72 @@ async function run() {
         });
 
         // Return equipment
+        // app.post('/api/equipment/:id/return', async (req, res) => {
+        //     try {
+        //         const { returnQuantity, userName, userEmail, Id } = req.body;
+
+        //         const item = await uploadItem.findOne({ _id: new ObjectId(req.params.id) });
+
+        //         if (!item) {
+        //             return res.status(404).json({ message: 'Item not found' });
+        //         }
+
+        //         await uploadItem.updateOne(
+        //             { _id: new ObjectId(req.params.id) },
+        //             { $inc: { quantity: returnQuantity } }
+        //         );
+
+        //         const db = uploadItem.s.db;
+        //         await db.collection('collectionRecords').updateOne(
+        //             {
+        //                 itemId: req.params.id,
+        //                 userName,
+        //                 userEmail,
+        //                 Id,
+        //                 status: 'collected'
+        //             },
+        //             {
+        //                 $set: {
+        //                     status: 'returned',
+        //                     returnedAt: new Date()
+        //                 }
+        //             }
+        //         );
+
+        //         res.json({ message: 'Item returned successfully' });
+        //     } catch (error) {
+        //         res.status(500).json({ message: 'Error returning item', error: error.message });
+        //     }
+        // });
         app.post('/api/equipment/:id/return', async (req, res) => {
             try {
                 const { returnQuantity, userName, userEmail, Id } = req.body;
 
-                const item = await uploadItem.findOne({ _id: new ObjectId(req.params.id) });
+                // Validation
+                if (!userEmail || !userName || !Id) {
+                    return res.status(400).json({
+                        message: 'Missing required user information'
+                    });
+                }
 
+                const item = await uploadItem.findOne({ _id: new ObjectId(req.params.id) });
                 if (!item) {
                     return res.status(404).json({ message: 'Item not found' });
                 }
 
+                // Update item quantity
                 await uploadItem.updateOne(
                     { _id: new ObjectId(req.params.id) },
-                    { $inc: { quantity: returnQuantity } }
+                    { $inc: { quantity: parseInt(returnQuantity) } }
                 );
 
-                const db = uploadItem.s.db;
-                await db.collection('collectionRecords').updateOne(
+                // Update collection record status
+                const updateResult = await collectionRecords.updateOne(
                     {
                         itemId: req.params.id,
-                        userName,
-                        userEmail,
-                        Id,
+                        userName: userName,
+                        userEmail: userEmail,  // ✅ Match by email
+                        Id: Id,
                         status: 'collected'
                     },
                     {
@@ -421,9 +464,29 @@ async function run() {
                     }
                 );
 
-                res.json({ message: 'Item returned successfully' });
+                // Log for debugging
+                console.log('Return Update Result:', {
+                    matchedCount: updateResult.matchedCount,
+                    modifiedCount: updateResult.modifiedCount,
+                    userEmail: userEmail
+                });
+
+                if (updateResult.matchedCount === 0) {
+                    return res.status(404).json({
+                        message: 'No matching collection record found'
+                    });
+                }
+
+                res.json({
+                    message: 'Item returned successfully',
+                    updated: updateResult.modifiedCount > 0
+                });
             } catch (error) {
-                res.status(500).json({ message: 'Error returning item', error: error.message });
+                console.error('Error returning item:', error);
+                res.status(500).json({
+                    message: 'Error returning item',
+                    error: error.message
+                });
             }
         });
 
@@ -580,7 +643,7 @@ async function run() {
                     totalPages: Math.ceil(total / limit),
                 });
 
-            } catch(error){
+            } catch (error) {
                 res.status(500).json({ message: 'Error fetching overdue equipment list', error: error.message });
             }
         });
@@ -597,9 +660,9 @@ async function run() {
                 if (!item) {
                     return res.status(404).json({ message: 'Item not found' });
                 }
-                
+
                 const oldData = { ...item };
-                
+
                 const updatedData = {
                     name,
                     description,
@@ -619,7 +682,7 @@ async function run() {
                     }
                 }
                 const result = await uploadItem.updateOne(query, { $set: updatedData });
-                
+
                 // 🆕 Log admin activity
                 if (userEmail) {
                     await logAdminActivity(userEmail, 'UPDATE_ITEM', {
@@ -634,7 +697,7 @@ async function run() {
                         ipAddress: req.ip
                     });
                 }
-                
+
                 res.json({
                     message: 'Item updated successfully',
                     result,
@@ -657,14 +720,14 @@ async function run() {
                 if (!item) {
                     return res.status(404).json({ message: 'Item not found' });
                 }
-                
+
                 const imagePath = path.join(__dirname, 'uploads', item.image);
                 if (fs.existsSync(imagePath)) {
                     fs.unlinkSync(imagePath);
                 }
-                
+
                 const result = await uploadItem.deleteOne(query);
-                
+
                 // 🆕 Log admin activity
                 if (userEmail) {
                     await logAdminActivity(userEmail, 'DELETE_ITEM', {
@@ -674,7 +737,7 @@ async function run() {
                         ipAddress: req.ip
                     });
                 }
-                
+
                 res.json({ message: 'Item deleted successfully', result });
             } catch (error) {
                 res.status(500).json({ message: 'Error deleting item', error: error.message });
